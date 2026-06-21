@@ -71,7 +71,7 @@ func (r *MachineReconciler) setDomainNetworkInterfaces(
 			return nil, fmt.Errorf("[network interface %s] %w", nic.Name, err)
 		}
 
-		libvirtNic, err := providerNetworkInterfaceToLibvirt(nic.Name, providerNic)
+		libvirtNic, err := providerNetworkInterfaceToLibvirt(nic.Name, providerNic, r.directNICMode)
 		if err != nil {
 			return nil, fmt.Errorf("[network interface %s] %w", nic.Name, err)
 		}
@@ -233,7 +233,7 @@ func (r *MachineReconciler) reconcileDesiredNetworkInterface(
 		}
 	}
 
-	libvirtNic, err := providerNetworkInterfaceToLibvirt(nic.Name, providerNic)
+	libvirtNic, err := providerNetworkInterfaceToLibvirt(nic.Name, providerNic, r.directNICMode)
 	if err != nil {
 		return nil, err
 	}
@@ -427,6 +427,17 @@ func libvirtInterfaceToProviderNetworkInterface(iface *libvirtxml.DomainInterfac
 				Dev: src.Direct.Dev,
 			},
 		}, nil
+	case src.Ethernet != nil:
+		// Plain-tap (type='ethernet') binding: the device name lives in <target dev=.. />, not the
+		// source. Map it back to the same provider Direct{Dev} so attach/detach stays idempotent.
+		if iface.Target == nil {
+			return nil, fmt.Errorf("ethernet interface source without a target device")
+		}
+		return &providernetworkinterface.NetworkInterface{
+			Direct: &providernetworkinterface.Direct{
+				Dev: iface.Target.Dev,
+			},
+		}, nil
 	default:
 		return nil, fmt.Errorf("invalid network source")
 	}
@@ -436,7 +447,11 @@ func networkInterfaceAlias(name string) string {
 	return fmt.Sprintf("%s%s", networkInterfaceAliasPrefix, name)
 }
 
-func providerNetworkInterfaceToLibvirt(name string, nic *providernetworkinterface.NetworkInterface) (*libvirtNetworkInterface, error) {
+// directNICModeTap selects the plain-tap (libvirt type='ethernet') host-device binding instead of
+// the default macvtap (type='direct'). See Options.DirectNICMode / --network-interface-direct-mode.
+const directNICModeTap = "tap"
+
+func providerNetworkInterfaceToLibvirt(name string, nic *providernetworkinterface.NetworkInterface, directMode string) (*libvirtNetworkInterface, error) {
 	switch {
 	case nic.HostDevice != nil:
 		return &libvirtNetworkInterface{
@@ -462,22 +477,36 @@ func providerNetworkInterfaceToLibvirt(name string, nic *providernetworkinterfac
 			},
 		}, nil
 	case nic.Direct != nil:
-		return &libvirtNetworkInterface{
-			iface: &libvirtxml.DomainInterface{
-				Alias: &libvirtxml.DomainAlias{
-					Name: networkInterfaceAlias(name),
-				},
-				Model: &libvirtxml.DomainInterfaceModel{
-					Type: "virtio",
-				},
-				Source: &libvirtxml.DomainInterfaceSource{
-					Direct: &libvirtxml.DomainInterfaceSourceDirect{
-						Dev:  nic.Direct.Dev,
-						Mode: "bridge",
-					},
-				},
+		iface := &libvirtxml.DomainInterface{
+			Alias: &libvirtxml.DomainAlias{
+				Name: networkInterfaceAlias(name),
 			},
-		}, nil
+			Model: &libvirtxml.DomainInterfaceModel{
+				Type: "virtio",
+			},
+		}
+		if directMode == directNICModeTap {
+			// Plain tap: <interface type='ethernet'><target dev='<dev>' managed='no'/>. qemu opens
+			// the pre-existing tap fd, so the guest's egress arrives as RX on the tap — visible to
+			// an XDP host dataplane. (macvtap would route egress as TX on the lower tap, hidden from
+			// XDP.) managed='no' tells libvirt not to create/destroy the device.
+			iface.Source = &libvirtxml.DomainInterfaceSource{
+				Ethernet: &libvirtxml.DomainInterfaceSourceEthernet{},
+			}
+			iface.Target = &libvirtxml.DomainInterfaceTarget{
+				Dev:     nic.Direct.Dev,
+				Managed: "no",
+			}
+		} else {
+			// Default: macvtap (<interface type='direct'><source dev='<dev>' mode='bridge'/>).
+			iface.Source = &libvirtxml.DomainInterfaceSource{
+				Direct: &libvirtxml.DomainInterfaceSourceDirect{
+					Dev:  nic.Direct.Dev,
+					Mode: "bridge",
+				},
+			}
+		}
+		return &libvirtNetworkInterface{iface: iface}, nil
 	case nic.Isolated != nil:
 		return &libvirtNetworkInterface{
 			iface: &libvirtxml.DomainInterface{
