@@ -89,6 +89,12 @@ type Options struct {
 	MachineEventStore recorder.EventStoreOptions
 
 	VolumeCachePolicy string
+
+	// DirectNICMode selects how the apinet "Direct" host-device NIC binding is realized in the
+	// libvirt domain XML: "macvtap" (libvirt type='direct', the default and what DPDK dpservice
+	// needs) or "tap" (libvirt type='ethernet' plain tap, required so an XDP host dataplane sees
+	// the guest's egress as RX on the tap).
+	DirectNICMode string
 }
 
 type HTTPServerOptions struct {
@@ -150,6 +156,10 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&o.MachineEventStore.ResyncInterval, "machine-event-resync-interval", 1*time.Minute, "Interval for resynchronizing the machine events.")
 
 	// Volume cache policy option
+	fs.StringVar(&o.DirectNICMode, "network-interface-direct-mode", "macvtap",
+		"Host-device NIC binding mode for the apinet 'Direct' plugin: 'macvtap' (libvirt "+
+			"type='direct', default — required for the DPDK dpservice) or 'tap' (libvirt "+
+			"type='ethernet' plain tap, required for an XDP host dataplane to see guest egress).")
 	fs.StringVar(&o.VolumeCachePolicy, "volume-cache-policy", "none",
 		`Policy to use when creating a remote disk. (one of 'none', 'writeback', 'writethrough', 'directsync', 'unsafe').
 Note: The available options may depend on the hypervisor and libvirt version in use.
@@ -354,6 +364,7 @@ func Run(ctx context.Context, opts Options) error {
 			EnableHugepages:                opts.EnableHugepages,
 			GCVMGracefulShutdownTimeout:    opts.GCVMGracefulShutdownTimeout,
 			VolumeCachePolicy:              opts.VolumeCachePolicy,
+			DirectNICMode:                  opts.DirectNICMode,
 		},
 	)
 	if err != nil {

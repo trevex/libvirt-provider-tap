@@ -76,6 +76,8 @@ type MachineReconcilerOptions struct {
 	EnableHugepages                bool
 	GCVMGracefulShutdownTimeout    time.Duration
 	VolumeCachePolicy              string
+	// DirectNICMode: "macvtap" (default) or "tap" — see Options.DirectNICMode in cmd/.../app.go.
+	DirectNICMode string
 }
 
 func NewMachineReconciler(
@@ -120,6 +122,7 @@ func NewMachineReconciler(
 		enableHugepages:                opts.EnableHugepages,
 		gcVMGracefulShutdownTimeout:    opts.GCVMGracefulShutdownTimeout,
 		volumeCachePolicy:              opts.VolumeCachePolicy,
+		directNICMode:                  opts.DirectNICMode,
 	}, nil
 }
 
@@ -147,6 +150,9 @@ type MachineReconciler struct {
 	resyncIntervalGarbageCollector time.Duration
 
 	volumeCachePolicy string
+
+	// directNICMode: "macvtap" (default) or "tap" for the apinet Direct host-device binding.
+	directNICMode string
 }
 
 func (r *MachineReconciler) Start(ctx context.Context) error {
