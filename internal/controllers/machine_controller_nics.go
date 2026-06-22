@@ -497,6 +497,13 @@ func providerNetworkInterfaceToLibvirt(name string, nic *providernetworkinterfac
 				Dev:     nic.Direct.Dev,
 				Managed: "no",
 			}
+			// Force vhost-net: the high-performance virtio path, where the guest's egress
+			// arrives as skbs on the tap for the host tc-BPF dataplane (clsact) to intercept.
+			// libvirt doesn't auto-enable it for an externally-managed type='ethernet' tap, so
+			// request it explicitly (needs /dev/vhost-net exposed to the provider pod).
+			iface.Driver = &libvirtxml.DomainInterfaceDriver{
+				Name: "vhost",
+			}
 		} else {
 			// Default: macvtap (<interface type='direct'><source dev='<dev>' mode='bridge'/>).
 			iface.Source = &libvirtxml.DomainInterfaceSource{
